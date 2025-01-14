@@ -6,6 +6,9 @@ import json
 from typing import Any
 import os
 
+import argparse
+import glob
+
 
 def parse_textract_response(path: str) -> tuple[str | None, Any]:
     if not os.path.exists(path):
@@ -125,6 +128,22 @@ def parse_gpt4o_response(path: str) -> tuple[str | None, Any]:
     return None, data
 
 
+def parse_gemini_response(path: str) -> tuple[str | None, Any]:
+    if not os.path.exists(path):
+        return None, None
+
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    html = data["html_table"]
+    # Extract just the table portion between <table> and </table>
+    start = html.find("<table>")
+    end = html.find("</table>") + 8
+    if start != -1 and end != -1:
+        return html[start:end], data
+    return None, data
+
+
 def parse_azure_response(path: str) -> tuple[str | None, Any]:
     data = None
     try:
@@ -174,3 +193,74 @@ def parse_azure_response(path: str) -> tuple[str | None, Any]:
         return azure_to_html(largest_table), data
     except Exception:
         return None, data
+
+
+PARSERS = {
+    "textract": parse_textract_response,
+    "gcloud": parse_gcloud_response,
+    "reducto": parse_reducto_response,
+    "chunkr": parse_chunkr_response,
+    "unstructured": parse_unstructured_response,
+    "gpt4o": parse_gpt4o_response,
+    "azure": parse_azure_response,
+    "gemini": parse_gemini_response,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--provider",
+        required=True,
+        choices=PARSERS.keys(),
+        help="Which parser to use (e.g. 'gpt4o', 'azure', etc.).",
+    )
+    parser.add_argument(
+        "--input-folder",
+        required=True,
+        help="Folder containing .json files from the provider.",
+    )
+    parser.add_argument(
+        "--output-folder",
+        required=True,
+        help="Folder to write the extracted .html files.",
+    )
+    args = parser.parse_args()
+
+    # Get the parser function based on the provider
+    parse_func = PARSERS[args.provider]
+
+    # Ensure output folder exists
+    os.makedirs(args.output_folder, exist_ok=True)
+
+    # Find all JSON files under input folder (recursively)
+    json_paths = glob.glob(
+        os.path.join(args.input_folder, "**", "*.json"), recursive=True
+    )
+
+    for json_file in json_paths:
+        # Parse the JSON to get HTML
+        html, raw_data = parse_func(json_file)
+
+        if not html:
+            # No table found or parse error
+            print(f"Skipping (no HTML found): {json_file}")
+            continue
+
+        # Build output path: replace .json with .html and replicate subfolders if desired
+        relative_path = os.path.relpath(json_file, start=args.input_folder)
+        out_name = os.path.splitext(relative_path)[0] + ".html"
+        out_path = os.path.join(args.output_folder, out_name)
+
+        # Make sure subdirectories exist
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        # Write the HTML to file
+        with open(out_path, "w") as f:
+            f.write(html)
+
+        print(f"Saved HTML to: {out_path}")
+
+
+if __name__ == "__main__":
+    main()
