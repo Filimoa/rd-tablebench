@@ -12,7 +12,7 @@ from openai import OpenAI
 from pdf2image import convert_from_path
 from tqdm import tqdm
 
-from config import settings
+from providers.config import settings
 
 
 base_path = os.path.expanduser(settings.input_dir)
